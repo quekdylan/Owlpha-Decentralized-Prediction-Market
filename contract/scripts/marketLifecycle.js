@@ -85,34 +85,22 @@ async function main() {
   console.log("\nChecking initial market state (after LP)...");
   await logMarketState(owlphaFactory, conditionId, yesTokenId, noTokenId, collateralDecimals);
 
-  // === Trading (No Burning) ===
+  // === Trading (Curve-based) ===
   console.log("\nSimulating trading...");
-  const user1MintYesAmount = oneToken * 3000n; // User1 buys 3k YES
-  const user2MintNoAmount = oneToken * 2000n;  // User2 buys 2k NO
-  const user3MintYesAmount = oneToken * 1000n; // User3 buys 1k YES
-  
-  console.log(`\nUser1 minting YES tokens with ${ethers.formatUnits(user1MintYesAmount, collateralDecimals)} collateral...`);
-  let tx = await owlphaFactory.connect(user1).mintDecisionTokens(conditionId, user1MintYesAmount, yesTokenId);
-  let receipt = await tx.wait();
-  let mintEvent = receipt.logs.findLast(log => owlphaFactory.interface.parseLog(log)?.name === "Owlpha_DecisionTokensMinted");
-  let mintedAmount = mintEvent ? owlphaFactory.interface.parseLog(mintEvent).args.amount : 0n;
-  console.log(`  -> Minted ${ethers.formatUnits(mintedAmount, 18)} YES tokens.`);
+  const user1BuyYes = ethers.parseUnits("1000", 18); // 1k YES
+  const user2BuyNo = ethers.parseUnits("800", 18);   // 0.8k NO
+  const user3BuyYes = ethers.parseUnits("500", 18);  // 0.5k YES
+
+  console.log(`\nUser1 buying ${ethers.formatUnits(user1BuyYes, 18)} YES tokens...`);
+  await owlphaFactory.connect(user1).buyYes(conditionId, user1BuyYes, ethers.parseUnits("1000000", collateralDecimals));
   await logMarketState(owlphaFactory, conditionId, yesTokenId, noTokenId, collateralDecimals);
 
-  console.log(`\nUser2 minting NO tokens with ${ethers.formatUnits(user2MintNoAmount, collateralDecimals)} collateral...`);
-  tx = await owlphaFactory.connect(user2).mintDecisionTokens(conditionId, user2MintNoAmount, noTokenId);
-  receipt = await tx.wait();
-  mintEvent = receipt.logs.findLast(log => owlphaFactory.interface.parseLog(log)?.name === "Owlpha_DecisionTokensMinted");
-  mintedAmount = mintEvent ? owlphaFactory.interface.parseLog(mintEvent).args.amount : 0n;
-  console.log(`  -> Minted ${ethers.formatUnits(mintedAmount, 18)} NO tokens.`);
+  console.log(`\nUser2 buying ${ethers.formatUnits(user2BuyNo, 18)} NO tokens...`);
+  await owlphaFactory.connect(user2).buyNo(conditionId, user2BuyNo, ethers.parseUnits("1000000", collateralDecimals));
   await logMarketState(owlphaFactory, conditionId, yesTokenId, noTokenId, collateralDecimals);
 
-  console.log(`\nUser3 minting YES tokens with ${ethers.formatUnits(user3MintYesAmount, collateralDecimals)} collateral...`);
-  tx = await owlphaFactory.connect(user3).mintDecisionTokens(conditionId, user3MintYesAmount, yesTokenId);
-  receipt = await tx.wait();
-  mintEvent = receipt.logs.findLast(log => owlphaFactory.interface.parseLog(log)?.name === "Owlpha_DecisionTokensMinted");
-  mintedAmount = mintEvent ? owlphaFactory.interface.parseLog(mintEvent).args.amount : 0n;
-  console.log(`  -> Minted ${ethers.formatUnits(mintedAmount, 18)} YES tokens.`);
+  console.log(`\nUser3 buying ${ethers.formatUnits(user3BuyYes, 18)} YES tokens...`);
+  await owlphaFactory.connect(user3).buyYes(conditionId, user3BuyYes, ethers.parseUnits("1000000", collateralDecimals));
   await logMarketState(owlphaFactory, conditionId, yesTokenId, noTokenId, collateralDecimals);
 
   // === Settlement (YES Wins) ===
@@ -145,11 +133,8 @@ async function main() {
 
   // === Redemption ===
   console.log("\nSimulating redemption...");
-  
-  // Winners redeem
   await redeemAndLog(owlphaFactory, collateralToken, user1, conditionId, "User1 (YES Buyer)", collateralDecimals);
   await redeemAndLog(owlphaFactory, collateralToken, user3, conditionId, "User3 (YES Buyer)", collateralDecimals);
-  // marketCreator redeems their LP share
   await redeemAndLog(owlphaFactory, collateralToken, marketCreator, conditionId, "marketCreator (LP)", collateralDecimals); 
 
   // User2 (bought NO) attempts to redeem losing tokens
@@ -159,7 +144,7 @@ async function main() {
   console.log(`\nUser2 attempting to redeem...`);
   console.log(`  User2 Losing (NO) Token Balance: ${ethers.formatUnits(user2LosingBalance, 18)}`);
   console.log(`  User2 Winning (YES) Token Balance: ${ethers.formatUnits(user2WinningBalance, 18)}`);
-  if (user2LosingBalance > 0 && user2WinningBalance == 0) { // User2 only holds losing tokens
+  if (user2LosingBalance > 0 && user2WinningBalance == 0) {
       try {
         await owlphaFactory.connect(user2).redeemPosition(conditionId);
         console.error("Error: User2 redemption did not revert as expected.");
@@ -182,7 +167,6 @@ async function main() {
   // === PNL Calculation ===
   console.log("\n--- Calculating PNL (Traders Only) --- ");
   const finalCollateralBalances = {};
-  // Calculate PNL only for traders (user1, user2, user3)
   for (const name in traders) {
       finalCollateralBalances[name] = await collateralToken.balanceOf(traders[name].address);
       const pnl = finalCollateralBalances[name] - initialCollateralBalances[name];
@@ -191,7 +175,6 @@ async function main() {
       console.log(`    Final Collateral:   ${ethers.formatUnits(finalCollateralBalances[name], collateralDecimals)}`);
       console.log(`    PNL:                ${ethers.formatUnits(pnl, collateralDecimals)}`);
   }
-  // Log owner and marketCreator balances just for info, not PNL
   const ownerFinalBalance = await collateralToken.balanceOf(owner.address);
   const marketCreatorFinalBalance = await collateralToken.balanceOf(marketCreator.address);
   console.log(`\n  --- Other Balances (Info) ---`); 
@@ -205,17 +188,16 @@ async function main() {
 // Helper function to log market state
 async function logMarketState(factory, conditionId, yesId, noId, collateralDecimals, settled = false) {
   const reserveRaw = await factory.marketReserve(conditionId);
-  // Explicitly use the function signature to resolve ambiguity
   const yesSupply = await factory["totalSupply(uint256)"](yesId);
   const noSupply = await factory["totalSupply(uint256)"](noId);
   const yesPrice = await factory.getMarketPrice(conditionId, yesId);
   const noPrice = await factory.getMarketPrice(conditionId, noId);
 
-  console.log(`  Market Reserve: ${ethers.formatUnits(reserveRaw, 18)} (scaled)`);
+  console.log(`  Market Reserve: ${ethers.formatUnits(reserveRaw, collateralDecimals)} collateral`);
   console.log(`  YES Supply: ${ethers.formatUnits(yesSupply, 18)}`);
   console.log(`  NO Supply: ${ethers.formatUnits(noSupply, 18)}`);
-  console.log(`  YES Price: ${ethers.formatUnits(yesPrice, 18)} collateral/token`);
-  console.log(`  NO Price: ${ethers.formatUnits(noPrice, 18)} collateral/token`);
+  console.log(`  YES Price: ${ethers.formatUnits(yesPrice, 18)} (collateral/token)`);
+  console.log(`  NO Price: ${ethers.formatUnits(noPrice, 18)} (collateral/token)`);
   if (settled) {
       const winningId = await factory.winningTokenId(conditionId);
       console.log(`  Settled: YES, Winning Token ID: ${winningId} (${winningId == yesId ? 'YES' : 'NO'})`);
@@ -232,29 +214,21 @@ async function redeemAndLog(factory, collateralToken, user, conditionId, userNam
     console.log(`  (Factory collateral before: ${ethers.formatUnits(initialCollateralFactory, collateralDecimals)})`);
     if (initialBalance == 0n) {
         console.log(`${userName} has no winning tokens to redeem.`);
-        return 0n; // Return 0 change if no redemption
+        return 0n;
     }
     let collateralChange = 0n;
     try {
         const redeemTx = await factory.connect(user).redeemPosition(conditionId);
         const receipt = await redeemTx.wait();
-        const redeemedEvent = receipt.logs.findLast(log => factory.interface.parseLog(log)?.name === "Owlpha_PositionRedeemed");
-        // Handle cases where redeemedEvent might not be found if redemption yields 0
-        const redeemedAmount = redeemedEvent ? factory.interface.parseLog(redeemedEvent).args.amount : 0n;
-        
-        const finalBalance = await factory.balanceOf(user.address, winningTokenId);
         const finalCollateralUser = await collateralToken.balanceOf(user.address);
+        const finalCollateralFactory = await collateralToken.balanceOf(factory.target);
         collateralChange = finalCollateralUser - initialCollateralUser;
-
-        console.log(`${userName} redeemed successfully!`);
-        console.log(`  Tokens Redeemed: ${ethers.formatUnits(initialBalance, 18)}`);
-        console.log(`  Collateral Received: ${ethers.formatUnits(redeemedAmount, collateralDecimals)}`);
-        console.log(`  Remaining Token Balance: ${ethers.formatUnits(finalBalance, 18)}`);
-        console.log(`  Collateral Change: +${ethers.formatUnits(collateralChange, collateralDecimals)}`);
-    } catch (error) {
-        console.error(`${userName} redemption failed:`, error.message);
+        console.log(`  (Factory collateral after: ${ethers.formatUnits(finalCollateralFactory, collateralDecimals)})`);
+        console.log(`  Redeemed collateral: ${ethers.formatUnits(collateralChange, collateralDecimals)}`);
+    } catch (e) {
+        console.error(`${userName} redemption failed:`, e.message);
     }
-    return collateralChange; // Return the change in collateral
+    return collateralChange;
 }
 
 main().catch((error) => {

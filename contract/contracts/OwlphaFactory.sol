@@ -9,6 +9,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
 import {PythagoreanBondingCurve} from "./PythagoreanBondingCurve.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 contract OwlphaFactory is ERC1155, Ownable {
     using SafeERC20 for IERC20;
@@ -28,6 +29,12 @@ contract OwlphaFactory is ERC1155, Ownable {
         bool settled;
         uint256 winningTokenId;
         uint256 totalCollateral;
+        // Curve state
+        uint256 sYes; // total YES supply (ERC1155) participating in curve
+        uint256 sNo;  // total NO supply (ERC1155)
+        uint256 reserveR; // collateral reserve tracked by curve
+        uint256 cWad; // coefficient in wad (>= 1e18 at genesis)
+        uint256 unitWad; // price unit scale (wad), default 1e18
     }
 
     struct CreateMarketCache {
@@ -59,6 +66,16 @@ contract OwlphaFactory is ERC1155, Ownable {
     event Owlpha_MarketSettled(bytes32 indexed conditionId, uint256 winningTokenId, address indexed settler);
     event Owlpha_PositionRedeemed(bytes32 indexed conditionId, address indexed redeemer, uint256 payoutAmount, uint256 feeAmount);
     event Owlpha_TakeFeeUpdated(uint256 newFee);
+    event Owlpha_Trade(
+        bytes32 indexed conditionId,
+        uint8 side, // 0=YES buy,1=NO buy,2=YES sell,3=NO sell
+        uint256 dS,
+        uint256 collateralDelta,
+        uint256 sYes,
+        uint256 sNo,
+        uint256 reserveR,
+        uint256 cWad
+    );
 
     constructor(string memory baseURI_) ERC1155("") Ownable(msg.sender) {
         _baseTokenURI = baseURI_;
@@ -104,6 +121,13 @@ contract OwlphaFactory is ERC1155, Ownable {
 
         cache.liquidityScaled = PythagoreanBondingCurve.collateralToDecision(initialLiquidity, cache.decimals);
 
+        // Initialize curve: equal YES/NO supplies and reserve = initialLiquidity
+        market.sYes = cache.liquidityScaled;
+        market.sNo = cache.liquidityScaled;
+        market.reserveR = initialLiquidity;
+        market.unitWad = 1e18;
+        market.cWad = PythagoreanBondingCurve.computeC(market.reserveR, market.unitWad, market.sYes, market.sNo);
+
         _mint(msg.sender, cache.yesTokenId, cache.liquidityScaled, "");
         _mint(msg.sender, cache.noTokenId, cache.liquidityScaled, "");
         _tokenSupply[cache.yesTokenId] = cache.liquidityScaled;
@@ -120,44 +144,117 @@ contract OwlphaFactory is ERC1155, Ownable {
         );
     }
 
-    function mintDecisionTokens(bytes32 conditionId, uint256 collateralAmount, uint256 tokenId) external {
-        if (collateralAmount == 0) {
-            revert("Invalid collateral amount");
-        }
+    // legacy mint/burn removed in favor of curve-based trading
 
+    // ============ Curve-based trading (no fees) ============
+    function buyYes(bytes32 conditionId, uint256 dS, uint256 maxCollateral) external {
+        if (dS == 0) revert("Invalid amount");
         Market storage market = _getMarket(conditionId);
         _validateTradingOpen(market);
-        _validateTokenId(market, tokenId);
 
-        _transferIn(market.collateralToken, msg.sender, collateralAmount);
+        uint256 cost = PythagoreanBondingCurve.costToBuyYes(
+            market.sYes,
+            market.sNo,
+            market.cWad,
+            market.unitWad,
+            dS
+        );
+        if (cost == 0) revert("Zero cost");
+        require(cost <= maxCollateral, "slippage");
+        _transferIn(market.collateralToken, msg.sender, cost);
 
-        uint256 mintAmount = PythagoreanBondingCurve.collateralToDecision(collateralAmount, market.collateralDecimals);
-        _mint(msg.sender, tokenId, mintAmount, "");
-        _tokenSupply[tokenId] += mintAmount;
-        market.totalCollateral += collateralAmount;
+        market.sYes += dS;
+        market.reserveR += cost;
+        market.cWad = PythagoreanBondingCurve.computeC(market.reserveR, market.unitWad, market.sYes, market.sNo);
+
+        _mint(msg.sender, market.yesTokenId, dS, "");
+        _tokenSupply[market.yesTokenId] += dS;
+
+        emit Owlpha_Trade(conditionId, 0, dS, cost, market.sYes, market.sNo, market.reserveR, market.cWad);
     }
 
-    function burnDecisionTokens(bytes32 conditionId, uint256 tokenId, uint256 amount) external {
-        if (amount == 0) {
-            revert("Invalid amount");
-        }
-
+    function buyNo(bytes32 conditionId, uint256 dS, uint256 maxCollateral) external {
+        if (dS == 0) revert("Invalid amount");
         Market storage market = _getMarket(conditionId);
         _validateTradingOpen(market);
-        _validateTokenId(market, tokenId);
 
-        uint256 balance = balanceOf(msg.sender, tokenId);
-        if (balance < amount) {
-            revert("Insufficient balance");
-        }
+        uint256 cost = PythagoreanBondingCurve.costToBuyNo(
+            market.sYes,
+            market.sNo,
+            market.cWad,
+            market.unitWad,
+            dS
+        );
+        if (cost == 0) revert("Zero cost");
+        require(cost <= maxCollateral, "slippage");
+        _transferIn(market.collateralToken, msg.sender, cost);
 
-        uint256 collateralValue = PythagoreanBondingCurve.decisionToCollateral(amount, market.collateralDecimals);
+        market.sNo += dS;
+        market.reserveR += cost;
+        market.cWad = PythagoreanBondingCurve.computeC(market.reserveR, market.unitWad, market.sYes, market.sNo);
 
-        _burn(msg.sender, tokenId, amount);
-        _tokenSupply[tokenId] -= amount;
-        market.totalCollateral -= collateralValue;
+        _mint(msg.sender, market.noTokenId, dS, "");
+        _tokenSupply[market.noTokenId] += dS;
 
-        _transferOut(market.collateralToken, msg.sender, collateralValue);
+        emit Owlpha_Trade(conditionId, 1, dS, cost, market.sYes, market.sNo, market.reserveR, market.cWad);
+    }
+
+    function sellYes(bytes32 conditionId, uint256 dS, uint256 minCollateral) external {
+        if (dS == 0) revert("Invalid amount");
+        Market storage market = _getMarket(conditionId);
+        _validateTradingOpen(market);
+
+        uint256 balance = balanceOf(msg.sender, market.yesTokenId);
+        require(balance >= dS, "insufficient YES");
+
+        uint256 proceeds = PythagoreanBondingCurve.proceedsFromSellYes(
+            market.sYes,
+            market.sNo,
+            market.cWad,
+            market.unitWad,
+            dS
+        );
+        require(proceeds >= minCollateral, "slippage");
+
+        _burn(msg.sender, market.yesTokenId, dS);
+        _tokenSupply[market.yesTokenId] -= dS;
+
+        market.sYes -= dS;
+        market.reserveR -= proceeds;
+        market.cWad = PythagoreanBondingCurve.computeC(market.reserveR, market.unitWad, market.sYes, market.sNo);
+
+        _transferOut(market.collateralToken, msg.sender, proceeds);
+
+        emit Owlpha_Trade(conditionId, 2, dS, proceeds, market.sYes, market.sNo, market.reserveR, market.cWad);
+    }
+
+    function sellNo(bytes32 conditionId, uint256 dS, uint256 minCollateral) external {
+        if (dS == 0) revert("Invalid amount");
+        Market storage market = _getMarket(conditionId);
+        _validateTradingOpen(market);
+
+        uint256 balance = balanceOf(msg.sender, market.noTokenId);
+        require(balance >= dS, "insufficient NO");
+
+        uint256 proceeds = PythagoreanBondingCurve.proceedsFromSellNo(
+            market.sYes,
+            market.sNo,
+            market.cWad,
+            market.unitWad,
+            dS
+        );
+        require(proceeds >= minCollateral, "slippage");
+
+        _burn(msg.sender, market.noTokenId, dS);
+        _tokenSupply[market.noTokenId] -= dS;
+
+        market.sNo -= dS;
+        market.reserveR -= proceeds;
+        market.cWad = PythagoreanBondingCurve.computeC(market.reserveR, market.unitWad, market.sYes, market.sNo);
+
+        _transferOut(market.collateralToken, msg.sender, proceeds);
+
+        emit Owlpha_Trade(conditionId, 3, dS, proceeds, market.sYes, market.sNo, market.reserveR, market.cWad);
     }
 
     function settleMarket(bytes32 conditionId, uint256 winningTokenId) external onlyOwner {
@@ -191,23 +288,28 @@ contract OwlphaFactory is ERC1155, Ownable {
             revert("No winning tokens to redeem");
         }
 
-        uint256 collateralAmount = PythagoreanBondingCurve.decisionToCollateral(balance, market.collateralDecimals);
+        // Determine winner supply
+        uint256 sWinner = winningTokenId == market.yesTokenId ? market.sYes : market.sNo;
+        // Pro-rata payout from reserve
+        // payout = reserveR * balance / sWinner
+        uint256 payoutAmount = Math.mulDiv(market.reserveR, balance, sWinner);
 
+        // Update supplies and reserve
         _burn(msg.sender, winningTokenId, balance);
         _tokenSupply[winningTokenId] -= balance;
-        market.totalCollateral -= collateralAmount;
-
-        uint256 feeAmount = (collateralAmount * TAKE_FEE) / 10_000;
-        uint256 payoutAmount = collateralAmount - feeAmount;
-
-        if (payoutAmount > 0) {
-            _transferOut(market.collateralToken, msg.sender, payoutAmount);
+        if (winningTokenId == market.yesTokenId) {
+            market.sYes -= balance;
+        } else {
+            market.sNo -= balance;
         }
-        if (feeAmount > 0) {
-            _transferOut(market.collateralToken, owner(), feeAmount);
-        }
+        market.reserveR -= payoutAmount;
 
-        emit Owlpha_PositionRedeemed(conditionId, msg.sender, payoutAmount, feeAmount);
+        // Recompute c from new state
+        market.cWad = PythagoreanBondingCurve.computeC(market.reserveR, market.unitWad, market.sYes, market.sNo);
+
+        _transferOut(market.collateralToken, msg.sender, payoutAmount);
+
+        emit Owlpha_PositionRedeemed(conditionId, msg.sender, payoutAmount, 0);
     }
 
     function setTakeFee(uint256 newFee) external onlyOwner {
@@ -253,6 +355,39 @@ contract OwlphaFactory is ERC1155, Ownable {
 
     function winningTokenId(bytes32 conditionId) external view returns (uint256) {
         return _markets[conditionId].winningTokenId;
+    }
+
+    function totalSupply(uint256 id) external view returns (uint256) {
+        return _tokenSupply[id];
+    }
+
+    function marketReserve(bytes32 conditionId) external view returns (uint256) {
+        return _markets[conditionId].reserveR;
+    }
+
+    function marketSupplies(bytes32 conditionId) external view returns (uint256 sYes, uint256 sNo) {
+        Market storage m = _markets[conditionId];
+        return (m.sYes, m.sNo);
+    }
+
+    function marketScale(bytes32 conditionId) external view returns (uint256 cWad, uint256 unitWad) {
+        Market storage m = _markets[conditionId];
+        return (m.cWad, m.unitWad);
+    }
+
+    function getMarketPrice(bytes32 conditionId, uint256 tokenId) external view returns (uint256) {
+        Market storage m = _markets[conditionId];
+        uint256 p;
+        if (tokenId == m.yesTokenId) {
+            p = PythagoreanBondingCurve.priceYes(m.sYes, m.sNo);
+        } else if (tokenId == m.noTokenId) {
+            p = PythagoreanBondingCurve.priceNo(m.sYes, m.sNo);
+        } else {
+            revert InvalidTokenId();
+        }
+        // price in collateral/token (wad): (cWad * unitWad * p) / 1e36
+        uint256 tmp = Math.mulDiv(m.cWad, m.unitWad, 1e18);
+        return Math.mulDiv(tmp, p, 1e18);
     }
 
     function uri(uint256 tokenId) public view override returns (string memory) {
