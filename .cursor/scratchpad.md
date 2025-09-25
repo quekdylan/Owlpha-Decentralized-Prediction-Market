@@ -122,3 +122,72 @@ Lessons
 - Keep fees inside reserve to maintain on-curve accounting and avoid drift.
 - When replacing APIs, keep temporaries reverting until tests migrate; then remove to silence warnings (done).
 
+---
+
+Frontend: Markets Browser (Planner)
+
+Background and Motivation
+
+We want a Markets Browser akin to the PNP screenshot: a dark-themed grid of market cards with category chips, search, sort (e.g., Volume), and a "Create Market" entry point. Our logo/theme aren’t finalized; we will copy the look/feel initially.
+
+Key Challenges and Analysis
+
+- Data source
+  - Short term: mock API (local JSON) and/or read from deployed local Hardhat node using viem to pull market metadata, prices, volume.
+  - Mid term: indexer service (TheGraph or custom) to compute volume and historical metrics. For now approximate volume = reserve delta or cumulative `Owlpha_Trade` deltas per market.
+- Derived fields
+  - YES/NO prices: use `getMarketPrice(conditionId, tokenId)`.
+  - Volume (24h/total): initially sum of `collateralDelta` from `Owlpha_Trade` per market (mock or quick RPC scan on page load for local dev).
+  - Status: Open/Settled via `marketSettled` and time vs `marketEndTime`.
+  - Thumbnail: temporary placeholder images.
+- UX spec (initial)
+  - Header with tabs: How it works, Explore markets (active), Leaderboard (stub), Create Market button.
+  - Category chips: All, Trending, Sports, Politics, Technology, ICM, Settled; chip toggles filter.
+  - Search input (free text over question/creator) + Sort dropdown (Volume, Newest, Ending Soon, Price Movements).
+  - Grid layout: 3 columns desktop, 2 tablet, 1 mobile. Each card shows image, question, YES/NO price badges, volume text, end date.
+  - Dark theme colors copied from PNP for now.
+- Tech stack
+  - Next.js 14 (App Router) + TypeScript + Tailwind CSS.
+  - viem + wagmi for wallet and contract reads (ethers v6 acceptable but viem preferred for reads).
+  - Zustand for lightweight client state (filters/sort/search).
+  - ESLint + Prettier.
+- Contract integration plan (phase 1)
+  - Config for factory address and ABI; for local dev, use `hardhat node` URL and addresses emitted by deploy script.
+  - Functions: list markets (temporary: mock list), fetch per-market details: `marketQuestion`, `marketEndTime`, `getYesTokenId`, `getNoTokenId`, `getMarketPrice`, `marketReserve`, `marketSettled`.
+
+High-level Task Breakdown
+
+1) Scaffold web app
+   - Create `web/` Next.js project with Tailwind, TypeScript, ESLint, Prettier.
+   - Add base dark theme variables and global styles copied from reference.
+   - Success: dev server runs, base layout renders.
+
+2) Markets data layer (mock + contract hooks)
+   - Define `Market` type and adapters to map from contract + mock.
+   - Implement viem client and read hooks for prices and statuses (gated by env for local RPC).
+   - Success: hook returns market DTOs for display (mock fallback works without chain).
+
+3) Markets Browser UI
+   - Build header/navigation, category chips, search, sort dropdown.
+   - Build responsive grid and `MarketCard` component with placeholders for image and computed badges.
+   - Success: grid shows mock markets; filters/search/sort work client-side.
+
+4) Price/volume integration
+   - Wire `getMarketPrice` reads; compute prices and format badges.
+   - Implement simple volume metric (sum of `Owlpha_Trade.collateralDelta` from recent blocks or mock number) with clear TODO for real indexer.
+   - Success: cards show dynamic YES/NO and volume; loading states handled.
+
+5) Create Market entry and routing
+   - Add Create Market button route stub; individual market page route `/markets/[id]` with details placeholder.
+   - Success: navigation works.
+
+6) Polish and docs
+   - Theming pass to match screenshot; add README run instructions and env example.
+   - Success: app is presentable and easy to run locally against mock or local node.
+
+Success Criteria
+
+- Page renders a grid of ≥6 mock markets with working search, category filter, and sort by volume.
+- When connected to local node with a few created markets, prices/settlement state load via contract reads without errors.
+- Lighthouse basic checks pass (no blocking errors), and no TypeScript or ESLint errors.
+
