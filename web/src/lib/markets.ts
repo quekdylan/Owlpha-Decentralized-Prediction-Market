@@ -1,3 +1,5 @@
+import { getBlockchainMarkets } from './blockchain';
+
 export type Market = {
   id: string;
   question: string;
@@ -85,7 +87,44 @@ export type MarketFilters = {
   sort?: "volume" | "newest" | "ending";
 };
 
-export function listMockMarkets(filters: MarketFilters = {}): Market[] {
+export async function listMockMarkets(filters: MarketFilters = {}): Promise<Market[]> {
+  try {
+    // Get real markets from blockchain first
+    const blockchainMarkets = await getBlockchainMarkets();
+    
+    // Combine with mock markets for demo purposes
+    let items = [...blockchainMarkets, ...mockMarkets];
+    
+    if (filters.category && filters.category !== "All") {
+      items = items.filter((m) => m.category === filters.category);
+    }
+    if (filters.search) {
+      const q = filters.search.toLowerCase();
+      items = items.filter((m) => m.question.toLowerCase().includes(q));
+    }
+    switch (filters.sort) {
+      case "volume":
+        items.sort((a, b) => b.volumeUSDC - a.volumeUSDC);
+        break;
+      case "newest":
+        items.sort((a, b) => b.endTime - a.endTime);
+        break;
+      case "ending":
+        items.sort((a, b) => a.endTime - b.endTime);
+        break;
+      default:
+        items.sort((a, b) => b.volumeUSDC - a.volumeUSDC);
+    }
+    return items;
+  } catch (error) {
+    console.error('Error fetching markets:', error);
+    // Fallback to mock markets if blockchain fetch fails
+    return listMockMarketsSync(filters);
+  }
+}
+
+// Synchronous version as fallback
+function listMockMarketsSync(filters: MarketFilters = {}): Market[] {
   let items = [...mockMarkets];
   if (filters.category && filters.category !== "All") {
     items = items.filter((m) => m.category === filters.category);

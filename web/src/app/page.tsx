@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { listMockMarkets, type Market } from "@/lib/markets";
+import CreateMarketForm from "@/components/CreateMarketForm";
 
 type SortKey = "volume" | "newest" | "ending";
 
@@ -17,6 +18,34 @@ export default function Home() {
   const [sort, setSort] = useState<SortKey>("volume");
   const [showHowItWorks, setShowHowItWorks] = useState<boolean>(false);
   const [currentStep, setCurrentStep] = useState<number>(0);
+  const [showCreateMarket, setShowCreateMarket] = useState<boolean>(false);
+  const [markets, setMarkets] = useState<Market[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+
+  // Load markets from blockchain
+  useEffect(() => {
+    const loadMarkets = async () => {
+      setLoading(true);
+      try {
+        const fetchedMarkets = await listMockMarkets({ category, search, sort });
+        setMarkets(fetchedMarkets);
+      } catch (error) {
+        console.error('Error loading markets:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadMarkets();
+  }, [category, search, sort]);
+
+  // Refresh markets when create market modal closes
+  const handleCreateMarketClose = async () => {
+    setShowCreateMarket(false);
+    // Refresh markets to show newly created ones
+    const fetchedMarkets = await listMockMarkets({ category, search, sort });
+    setMarkets(fetchedMarkets);
+  };
   
   const howItWorksSteps: HowItWorksStep[] = [
     {
@@ -36,7 +65,6 @@ export default function Home() {
     }
   ];
   
-  const markets = useMemo<Market[]>(() => listMockMarkets({ category, search, sort }), [category, search, sort]);
   return (
     <div className="px-12 py-10">
       <header className="mb-8 flex items-center justify-between">
@@ -53,7 +81,10 @@ export default function Home() {
             <span className="text-white/70">Leaderboard</span>
           </nav>
         </div>
-        <button className="boton-elegante relative overflow-hidden px-8 py-4 border-2 border-neutral-700 bg-neutral-900 text-white text-xl cursor-pointer rounded-full transition-all duration-400 outline-none font-bold hover:border-neutral-500 hover:bg-fuchsia-600/20 group">
+        <button 
+          onClick={() => setShowCreateMarket(true)}
+          className="boton-elegante relative overflow-hidden px-8 py-4 border-2 border-neutral-700 bg-neutral-900 text-white text-xl cursor-pointer rounded-full transition-all duration-400 outline-none font-bold hover:border-neutral-500 hover:bg-fuchsia-600/20 group"
+        >
           Create Market
           <span className="absolute top-0 left-0 w-full h-full bg-gradient-radial from-white/25 to-transparent opacity-0 scale-0 transition-transform duration-500 group-hover:scale-[4] group-hover:opacity-100"></span>
         </button>
@@ -92,22 +123,32 @@ export default function Home() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
-        {markets.map((m) => (
-          <article key={m.id} className="overflow-hidden rounded-xl border border-white/10 bg-white/5">
-            <div className="h-40 w-full bg-gradient-to-br from-fuchsia-700/30 to-indigo-700/20" />
-            <div className="space-y-3 p-4">
-              <h3 className="text-sm text-white/90">{m.question}</h3>
-              <div className="flex items-center gap-2 text-xs">
-                <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-emerald-300">YES ${m.yesPrice.toFixed(2)}</span>
-                <span className="rounded bg-rose-500/20 px-2 py-0.5 text-rose-300">NO ${m.noPrice.toFixed(2)}</span>
+        {loading ? (
+          <div className="col-span-full text-center text-white/60 py-12">
+            Loading markets...
+          </div>
+        ) : markets.length === 0 ? (
+          <div className="col-span-full text-center text-white/60 py-12">
+            No markets found. Create the first one!
+          </div>
+        ) : (
+          markets.map((m) => (
+            <article key={m.id} className="overflow-hidden rounded-xl border border-white/10 bg-white/5">
+              <div className="h-40 w-full bg-gradient-to-br from-fuchsia-700/30 to-indigo-700/20" />
+              <div className="space-y-3 p-4">
+                <h3 className="text-sm text-white/90">{m.question}</h3>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-emerald-300">YES ${m.yesPrice.toFixed(2)}</span>
+                  <span className="rounded bg-rose-500/20 px-2 py-0.5 text-rose-300">NO ${m.noPrice.toFixed(2)}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs text-white/60">
+                  <span>Vol: {m.volumeUSDC.toFixed(3)} USDC</span>
+                  <span>{new Date(m.endTime * 1000).toISOString().split('T')[0]}</span>
+                </div>
               </div>
-              <div className="flex items-center justify-between text-xs text-white/60">
-                <span>Vol: {m.volumeUSDC.toFixed(3)} USDC</span>
-                <span>{new Date(m.endTime * 1000).toISOString().split('T')[0]}</span>
-              </div>
-            </div>
-          </article>
-        ))}
+            </article>
+          ))
+        )}
       </div>
 
       {/* How It Works Modal */}
@@ -181,6 +222,12 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* Create Market Form Modal */}
+      <CreateMarketForm 
+        isOpen={showCreateMarket} 
+        onClose={handleCreateMarketClose} 
+      />
     </div>
   );
 }
