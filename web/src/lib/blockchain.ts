@@ -8,7 +8,12 @@ declare global {
 }
 
 // This will be replaced with actual deployed address
-export const OWLPHA_FACTORY_ADDRESS = '0x0165878A594ca255338adfa4d48449f69242Eb8F'; // Updated with deployed address
+export const OWLPHA_FACTORY_ADDRESS = '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0'; // Updated with deployed address
+
+// Set this to the block where OwlphaFactory was deployed
+// For local development (Hardhat node), use 0
+// For production, set to actual deployment block to speed up queries
+export const FACTORY_DEPLOYMENT_BLOCK = 0;
 
 // Basic ABI for createPredictionMarket function
 export const OWLPHA_FACTORY_ABI = [
@@ -33,42 +38,78 @@ export const USDC_ABI = [
 ];
 
 // Mock USDC address for testing (you'll need to deploy this)
-export const MOCK_USDC_ADDRESS = '0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9'; // Updated with deployed address
+export const MOCK_USDC_ADDRESS = '0x5FbDB2315678afecb367f032d93F642f64180aa3'; // Updated with deployed address
 
 // Get markets from blockchain
 export async function getBlockchainMarkets() {
   try {
     if (typeof window.ethereum === 'undefined') {
+      console.log('No MetaMask detected, returning empty markets');
       return []; // Return empty array if no web3
     }
 
     const provider = new ethers.BrowserProvider(window.ethereum);
     const contract = new ethers.Contract(OWLPHA_FACTORY_ADDRESS, OWLPHA_FACTORY_ABI, provider);
     
-    // Get all market creation events
+    // Check if we're on the right network (Hardhat local = chainId 31337)
+    const network = await provider.getNetwork();
+    console.log('Connected to network:', network);
+    
+    // Query for market creation events from deployment block to latest
+    console.log(`Scanning for markets from block ${FACTORY_DEPLOYMENT_BLOCK} to latest...`);
     const filter = contract.filters.Owlpha_MarketCreated();
-    const events = await contract.queryFilter(filter, 0, 'latest');
+    const events = await contract.queryFilter(filter, FACTORY_DEPLOYMENT_BLOCK, 'latest');
     
     console.log(`Found ${events.length} markets on blockchain`);
     
-    const markets = await Promise.all(events.map(async (event: any) => {
+    if (events.length === 0) {
+      console.log('No markets found on blockchain');
+      return [];
+    }
+    
+    // Process each market with delays to prevent circuit breaker
+    const markets = [];
+    for (let i = 0; i < events.length; i++) {
+      const event = events[i];
       try {
-        const { conditionId, question, endTime, yesTokenId, noTokenId } = event.args;
+        console.log(`Processing market ${i + 1}/${events.length}...`);
+        const { conditionId, question, endTime, yesTokenId, noTokenId } = (event as any).args;
         
-        // Get additional market data
-        const [settled, reserve, supplies] = await Promise.all([
-          contract.marketSettled(conditionId),
-          contract.marketReserve(conditionId),
-          contract.marketSupplies(conditionId)
-        ]);
+        // Get additional market data with small delay
+        await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay between markets
         
-        // Calculate prices (simplified)
+        let settled, reserve, supplies;
+        try {
+          console.log(`  Fetching market data for ${conditionId}...`);
+          [settled, reserve, supplies] = await Promise.all([
+            contract.marketSettled(conditionId).catch(err => {
+              console.warn(`    ⚠️ marketSettled failed:`, err instanceof Error ? err.message : String(err));
+              return false; // Default to not settled
+            }),
+            contract.marketReserve(conditionId).catch(err => {
+              console.warn(`    ⚠️ marketReserve failed:`, err instanceof Error ? err.message : String(err));
+              return 0; // Default to 0 reserve
+            }),
+            contract.marketSupplies(conditionId).catch(err => {
+              console.warn(`    ⚠️ marketSupplies failed:`, err instanceof Error ? err.message : String(err));
+              return { sYes: ethers.parseUnits('0', 18), sNo: ethers.parseUnits('0', 18) }; // Default to 0 supply
+            })
+          ]);
+        } catch (err) {
+          console.error(`    ❌ Failed to fetch market data:`, err instanceof Error ? err.message : String(err));
+          // Use defaults
+          settled = false;
+          reserve = 0;
+          supplies = { sYes: ethers.parseUnits('0', 18), sNo: ethers.parseUnits('0', 18) };
+        }
+        
+        // Calculate prices (simplified - not using Pythagorean curve yet)
         const totalSupply = supplies.sYes + supplies.sNo;
         const hundred = ethers.parseUnits('100', 0);
         const yesPrice = totalSupply > 0 ? Number(supplies.sYes * hundred / totalSupply) / 100 : 0.5;
         const noPrice = totalSupply > 0 ? Number(supplies.sNo * hundred / totalSupply) / 100 : 0.5;
         
-        return {
+        const market = {
           id: conditionId,
           question: question,
           category: "Blockchain", // Default category
@@ -79,32 +120,120 @@ export async function getBlockchainMarkets() {
           settled: settled,
           imageUrl: "/placeholder/blockchain.png"
         };
+        
+        markets.push(market);
+        console.log(`✅ Market processed: "${question}"`);
+        
       } catch (err) {
-        console.error('Error processing market:', err);
-        return null;
+        console.error(`❌ Error processing market ${i + 1}:`, err);
+        // Continue processing other markets
       }
-    }));
+    }
     
-    return markets.filter(m => m !== null);
+    console.log(`Successfully loaded ${markets.length} markets from blockchain`);
+    return markets;
+    
   } catch (error) {
     console.error('Error fetching blockchain markets:', error);
     return [];
   }
 }
 
+// Fetch a single market by conditionId
+export async function getBlockchainMarketById(conditionId: string) {
+  try {
+    if (typeof window.ethereum === 'undefined') {
+      return null;
+    }
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    const contract = new ethers.Contract(OWLPHA_FACTORY_ADDRESS, OWLPHA_FACTORY_ABI, provider);
+
+    // Read core fields
+    const [question, endTime, settled, reserve, supplies] = await Promise.all([
+      contract.marketQuestion(conditionId),
+      contract.marketEndTime(conditionId),
+      contract.marketSettled(conditionId),
+      contract.marketReserve(conditionId),
+      contract.marketSupplies(conditionId)
+    ]);
+
+    // Find creation event to get createdAt timestamp
+    let createdAt: number | null = null;
+    let creator: string | null = null;
+    try {
+      const filter = contract.filters.Owlpha_MarketCreated();
+      const events = await contract.queryFilter(filter, FACTORY_DEPLOYMENT_BLOCK, 'latest');
+      const iface = new ethers.Interface(OWLPHA_FACTORY_ABI);
+      const match = events.find((e: any) => {
+        try {
+          const parsed = iface.parseLog(e);
+          const id = parsed?.args?.[0];
+          return String(id).toLowerCase() === String(conditionId).toLowerCase();
+        } catch { return false; }
+      });
+      if (match?.blockNumber) {
+        try {
+          const parsed = iface.parseLog(match);
+          if (parsed?.args?.[1]) creator = String(parsed.args[1]);
+        } catch {}
+        const block = await provider.getBlock(match.blockNumber);
+        if (block?.timestamp) createdAt = Number(block.timestamp) * 1000;
+      }
+    } catch (e) {
+      console.warn('Could not resolve market createdAt from events:', e);
+    }
+
+    const totalSupply = supplies.sYes + supplies.sNo;
+    const hundred = ethers.parseUnits('100', 0);
+    const yesPrice = totalSupply > 0 ? Number(supplies.sYes * hundred / totalSupply) / 100 : 0.5;
+    const noPrice = totalSupply > 0 ? Number(supplies.sNo * hundred / totalSupply) / 100 : 0.5;
+
+    return {
+      id: conditionId,
+      question: question as string,
+      category: 'Blockchain',
+      endTime: Number(endTime),
+      yesPrice,
+      noPrice,
+      volumeUSDC: Number(ethers.formatUnits(reserve, 6)),
+      settled: Boolean(settled),
+      imageUrl: '/placeholder/blockchain.png',
+      createdAt,
+      creator
+    };
+  } catch (error) {
+    console.error('Error fetching market by id:', error);
+    return null;
+  }
+}
+
 export async function connectWallet() {
   if (typeof window.ethereum !== 'undefined') {
     try {
+      // Step 1: Request account access (most important)
       await window.ethereum.request({ method: 'eth_requestAccounts' });
+      
+      // Step 2: Create provider and get basic info (with delay to avoid circuit breaker)
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
       const address = await signer.getAddress();
-      const balance = await provider.getBalance(address);
       
       console.log('🔗 Wallet Connected:');
       console.log('📍 Address:', address);
-      console.log('💰 ETH Balance:', ethers.formatEther(balance), 'ETH');
-      console.log('🌐 Network:', await provider.getNetwork());
+      
+      // Step 3: Get additional info with delay to prevent circuit breaker
+      try {
+        await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
+        const balance = await provider.getBalance(address);
+        console.log('💰 ETH Balance:', ethers.formatEther(balance), 'ETH');
+        
+        await new Promise(resolve => setTimeout(resolve, 500)); // Another 500ms delay
+        const network = await provider.getNetwork();
+        console.log('🌐 Network:', network);
+      } catch (infoError) {
+        console.warn('Could not fetch wallet info:', infoError);
+        // Don't fail the connection if we can't get balance/network info
+      }
       
       return { provider, signer };
     } catch (error) {
@@ -187,7 +316,26 @@ export async function createMarket(
     console.log('Transaction submitted, waiting for confirmation...');
     const receipt = await tx.wait();
     console.log('Market created successfully:', receipt);
-    return receipt;
+
+    // Try to extract conditionId from logs
+    let conditionId: string | null = null;
+    try {
+      const iface = new ethers.Interface(OWLPHA_FACTORY_ABI);
+      for (const log of receipt.logs) {
+        try {
+          const parsed = iface.parseLog(log);
+          if (parsed?.name === 'Owlpha_MarketCreated') {
+            // event Owlpha_MarketCreated(bytes32 indexed conditionId, ...)
+            conditionId = parsed.args[0] as string;
+            break;
+          }
+        } catch (_) {}
+      }
+    } catch (e) {
+      console.warn('Could not parse conditionId from logs:', e);
+    }
+
+    return { receipt, conditionId } as const;
   } catch (error) {
     console.error('Error creating market:', error);
     throw error;

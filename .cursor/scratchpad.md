@@ -104,6 +104,7 @@ Current Status / Progress Tracking
   - Added getters: `totalSupply(uint256)`, `marketReserve(bytes32)`, `marketSupplies(bytes32)`, `getMarketPrice(bytes32, tokenId)`.
   - Updated tests to curve API; suite passes.
   - Updated `scripts/marketLifecycle.js` to demonstrate prices/reserve and PnL; script runs successfully.
+  - Switched local repository to branch `keanyee` tracking `origin/keanyee`.
 
 Executor's Feedback or Assistance Requests
 
@@ -116,11 +117,80 @@ Follow-ups (optional):
 - Add invariant assertions to tests (e.g., `priceYes^2 + priceNo^2 ≈ 1` and `reserve ≈ c·unit·sqrt(sYes^2+sNo^2)`) with integer tolerance.
 - Consider governance/roles for `settleMarket` (multisig) in future.
 
+Browser Testing Results (2025-10-14):
+- ✅ Page loads successfully at http://localhost:3000
+- ✅ Markets grid displays 6 mock markets with correct data (question, YES/NO prices, volume, end dates)
+- ✅ Category filters work correctly (All, Trending, Sports, Politics, Technology, ICM, Settled)
+- ✅ Search functionality works - filters markets by search term
+- ✅ Sort dropdown works - changes market order (Volume, Newest, Ending Soon)
+- ✅ Dark theme renders correctly
+- ✅ No console errors (only React DevTools info message)
+- ✅ All network requests return 200 OK
+- ✅ Responsive layout appears correct
+- ✅ Fixed React hydration error by adding suppressHydrationWarning to body tag in layout.tsx
+- ✅ Implemented wallet-first connection flow to prevent MetaMask circuit breaker errors
+  - Created WalletConnection component with MetaMask connect button
+  - Modified main page to require wallet connection before loading blockchain data
+  - Prevents automatic RPC calls that trigger circuit breaker on page load
+- ✅ Fixed MetaMask circuit breaker error during wallet connection
+  - Added delays between RPC calls in connectWallet() function (500ms between balance/network calls)
+  - Made balance/network info fetching non-blocking (wrapped in try-catch)
+  - Temporarily disabled heavy queryFilter call in getBlockchainMarkets() that scans from genesis block
+- ✅ Implemented wallet address display and disconnect functionality
+  - Created WalletButton component with dropdown menu (inspired by Hyperliquid design)
+  - Shows truncated wallet address (0xB92A...8E42 format) with green connection indicator
+  - Dropdown includes full address with copy-to-clipboard functionality
+  - Disconnect button clears wallet state and returns to connection screen
+  - Positioned in top-right corner next to Create Market button
+- ✅ Successfully re-enabled getBlockchainMarkets() function
+  - Added network detection and deployment block configuration (set to 0 for local Hardhat)
+  - Implemented pagination-safe querying with delays between market processing
+  - Added comprehensive error handling for individual market data fetching
+  - Verified working with local Hardhat node (Chain ID 31337, 4 blocks total)
+  - Successfully displays real blockchain markets alongside mock markets
+  - Example: "Will Trump say Hottest" market now appears from blockchain
+- ✅ Implemented complete individual market page (inspired by PNP design)
+  - Created dynamic route `/markets/[id]` for individual market pages
+  - Market header with breadcrumbs, question, key metrics (volume, end date, creator)
+  - Trading interface with Buy/Sell toggle, amount input, and quick amount buttons
+  - YES/NO option buttons with prices, probabilities, and multipliers
+  - Holdings display showing current YES/NO token balances and values
+  - Market status section with countdown timer and timeline
+  - Settlement information tabs (AI Reasoning, Resolution Sources, Settlement Criteria)
+  - Related markets table with clickable rows
+  - Clickable market cards on main page that navigate to individual pages
+  - Responsive design with proper dark theme styling
+- ✅ Implemented enhanced market creation flow with LLM validation (inspired by PNP design)
+  - Redesigned CreateMarketForm to match PNP's professional modal design
+  - Removed market-type selection; form starts with Market Creation Guidelines
+  - Three required fields: Question, Expiry date+time, Initial Liquidity
+  - Market creation guidelines display with 4 key rules
+  - LLM validation process with loading spinner and status messages
+  - Settlement analysis results showing AI Reasoning, Resolution Sources, Settlement Criteria
+  - Proper form validation and error handling
+  - Dark theme styling consistent with main application
+  - Auto-proceeds to blockchain creation after successful validation
+- ✅ Wallet balance in Create Market shows real balance
+  - Replaced hardcoded USDC mock with live wallet balance fetch
+  - Currently shows ETH balance (no USDC token yet); loading state added
+- ✅ Integrated real LLM (Gemini) for market validation
+  - Added `@google/generative-ai` and `src/lib/gemini.ts`
+  - Implemented `validateMarketWithGemini(question, expireDate, expireTime)`
+  - Prompt enforces guidelines and returns JSON { isValid, reasoning, resolutionSources, settlementCriteria, rejectionReason }
+  - Updated UI to show ✅ valid / ❌ invalid with detailed feedback
+  - Fixed model error by switching from `gemini-pro` to `gemini-1.5-flash`
+  - Added helper to list available models for debugging
+  - Requires env var `NEXT_PUBLIC_GEMINI_API_KEY`
+- Note: Some contract calls show as <UnrecognizedContract> in Hardhat logs (normal for missing ABI), but functionality works correctly
+
 Lessons
 
 - Include numerical tolerance checks in tests when validating invariants with integer math.
 - Keep fees inside reserve to maintain on-curve accounting and avoid drift.
 - When replacing APIs, keep temporaries reverting until tests migrate; then remove to silence warnings (done).
+- React hydration errors occur when server-rendered HTML doesn't match client-rendered HTML. Use `suppressHydrationWarning` on the specific element (e.g., body tag) where dynamic classes or font variables cause mismatches.
+- MetaMask circuit breaker errors occur when dapps make heavy RPC calls (like `queryFilter` from genesis) without wallet connection. Implement wallet-first flow to prevent automatic blockchain calls on page load.
+- When fixing circuit breaker errors in wallet connection, add delays between RPC calls (500ms) and make non-essential calls non-blocking with try-catch. Avoid heavy operations like scanning entire blockchain history.
 
 ---
 

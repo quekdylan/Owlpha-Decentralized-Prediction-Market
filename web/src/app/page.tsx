@@ -1,8 +1,13 @@
+
 'use client';
 
 import { useMemo, useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { listMockMarkets, type Market } from "@/lib/markets";
 import CreateMarketForm from "@/components/CreateMarketForm";
+import WalletConnection from "@/components/WalletConnection";
+import WalletButton from "@/components/WalletButton";
+import { connectWallet } from "@/lib/blockchain";
 
 type SortKey = "volume" | "newest" | "ending";
 
@@ -13,6 +18,16 @@ type HowItWorksStep = {
 };
 
 export default function Home() {
+  const router = useRouter();
+  const [isWalletConnected, setIsWalletConnected] = useState<boolean>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        return localStorage.getItem('walletConnected') === '1';
+      }
+    } catch (_) {}
+    return false;
+  });
+  const [walletAddress, setWalletAddress] = useState<string>("");
   const [category, setCategory] = useState<string>("All");
   const [search, setSearch] = useState<string>("");
   const [sort, setSort] = useState<SortKey>("volume");
@@ -22,8 +37,41 @@ export default function Home() {
   const [markets, setMarkets] = useState<Market[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Load markets from blockchain
+  // Detect existing wallet connection on first load (no prompt)
   useEffect(() => {
+    const detectConnection = async () => {
+      try {
+        if (typeof window !== 'undefined') {
+          // If we've previously connected in this session
+          const persisted = localStorage.getItem('walletConnected');
+          // Or if the wallet already has authorized accounts
+          const eth: any = (window as any).ethereum;
+          if (eth && eth.request) {
+            const accounts = await eth.request({ method: 'eth_accounts' });
+            if (accounts && accounts.length > 0) {
+              setIsWalletConnected(true);
+              setWalletAddress(accounts[0]);
+              localStorage.setItem('walletConnected', '1');
+              localStorage.setItem('walletAddress', accounts[0]);
+              return;
+            }
+          }
+          // Fallback to stored address if user previously connected
+          if (persisted === '1') {
+            const cachedAddr = localStorage.getItem('walletAddress');
+            if (cachedAddr) setWalletAddress(cachedAddr);
+            setIsWalletConnected(true);
+          }
+        }
+      } catch (_) {}
+    };
+    detectConnection();
+  }, []);
+
+  // Load markets from blockchain (only after wallet connection)
+  useEffect(() => {
+    if (!isWalletConnected) return;
+    
     const loadMarkets = async () => {
       setLoading(true);
       try {
@@ -37,14 +85,33 @@ export default function Home() {
     };
 
     loadMarkets();
-  }, [category, search, sort]);
+  }, [isWalletConnected, category, search, sort]);
+
+  // Handle wallet connection
+  const handleWalletConnected = (address: string) => {
+    setWalletAddress(address);
+    setIsWalletConnected(true);
+    try {
+      localStorage.setItem('walletConnected', '1');
+      localStorage.setItem('walletAddress', address);
+    } catch (_) {}
+  };
+
+  // Handle wallet disconnection
+  const handleWalletDisconnect = () => {
+    setWalletAddress("");
+    setIsWalletConnected(false);
+    setMarkets([]);
+  };
 
   // Refresh markets when create market modal closes
   const handleCreateMarketClose = async () => {
     setShowCreateMarket(false);
     // Refresh markets to show newly created ones
-    const fetchedMarkets = await listMockMarkets({ category, search, sort });
-    setMarkets(fetchedMarkets);
+    if (isWalletConnected) {
+      const fetchedMarkets = await listMockMarkets({ category, search, sort });
+      setMarkets(fetchedMarkets);
+    }
   };
   
   const howItWorksSteps: HowItWorksStep[] = [
@@ -65,6 +132,11 @@ export default function Home() {
     }
   ];
   
+  // Show wallet connection screen if not connected
+  if (!isWalletConnected) {
+    return <WalletConnection onConnected={handleWalletConnected} />;
+  }
+  
   return (
     <div className="px-12 py-10">
       <header className="mb-8 flex items-center justify-between">
@@ -81,13 +153,16 @@ export default function Home() {
             <span className="text-white/70">Leaderboard</span>
           </nav>
         </div>
-        <button 
-          onClick={() => setShowCreateMarket(true)}
-          className="boton-elegante relative overflow-hidden px-8 py-4 border-2 border-neutral-700 bg-neutral-900 text-white text-xl cursor-pointer rounded-full transition-all duration-400 outline-none font-bold hover:border-neutral-500 hover:bg-fuchsia-600/20 group"
-        >
-          Create Market
-          <span className="absolute top-0 left-0 w-full h-full bg-gradient-radial from-white/25 to-transparent opacity-0 scale-0 transition-transform duration-500 group-hover:scale-[4] group-hover:opacity-100"></span>
-        </button>
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={() => setShowCreateMarket(true)}
+            className="boton-elegante relative overflow-hidden px-8 py-4 border-2 border-neutral-700 bg-neutral-900 text-white text-xl cursor-pointer rounded-full transition-all duration-400 outline-none font-bold hover:border-neutral-500 hover:bg-fuchsia-600/20 group"
+          >
+            Create Market
+            <span className="absolute top-0 left-0 w-full h-full bg-gradient-radial from-white/25 to-transparent opacity-0 scale-0 transition-transform duration-500 group-hover:scale-[4] group-hover:opacity-100"></span>
+          </button>
+          <WalletButton address={walletAddress} onDisconnect={handleWalletDisconnect} />
+        </div>
       </header>
 
       <h1 className="mb-6 text-3xl font-bold">Markets Browser</h1>
@@ -133,7 +208,11 @@ export default function Home() {
           </div>
         ) : (
           markets.map((m) => (
-            <article key={m.id} className="overflow-hidden rounded-xl border border-white/10 bg-white/5">
+            <article 
+              key={m.id} 
+              className="overflow-hidden rounded-xl border border-white/10 bg-white/5 cursor-pointer hover:bg-white/10 transition-colors"
+              onClick={() => router.push(`/markets/${m.id}`)}
+            >
               <div className="h-40 w-full bg-gradient-to-br from-fuchsia-700/30 to-indigo-700/20" />
               <div className="space-y-3 p-4">
                 <h3 className="text-sm text-white/90">{m.question}</h3>

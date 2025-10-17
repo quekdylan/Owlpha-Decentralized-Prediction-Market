@@ -49,6 +49,7 @@ contract OwlphaFactory is ERC1155, Ownable {
 
     mapping(bytes32 => Market) private _markets;
     mapping(uint256 => uint256) private _tokenSupply;
+    mapping(bytes32 => address) private _creators;
 
     uint256 private _nextTokenId = 1;
     string private _baseTokenURI;
@@ -62,6 +63,9 @@ contract OwlphaFactory is ERC1155, Ownable {
         uint256 endTime,
         address collateralToken
     );
+
+    // Off-chain note (e.g., LLM settlement JSON or CID)
+    event Owlpha_MarketNote(bytes32 indexed conditionId, address indexed author, string note);
 
     event Owlpha_MarketSettled(bytes32 indexed conditionId, uint256 winningTokenId, address indexed settler);
     event Owlpha_PositionRedeemed(bytes32 indexed conditionId, address indexed redeemer, uint256 payoutAmount, uint256 feeAmount);
@@ -133,6 +137,8 @@ contract OwlphaFactory is ERC1155, Ownable {
         _tokenSupply[cache.yesTokenId] = cache.liquidityScaled;
         _tokenSupply[cache.noTokenId] = cache.liquidityScaled;
 
+        _creators[conditionId] = msg.sender;
+
         emit Owlpha_MarketCreated(
             conditionId,
             msg.sender,
@@ -142,6 +148,13 @@ contract OwlphaFactory is ERC1155, Ownable {
             market.endTime,
             market.collateralToken
         );
+    }
+
+    /// @notice Attach a human/LLM-readable settlement note (JSON or URI) to a market via event
+    function attachMarketNote(bytes32 conditionId, string calldata note) external {
+        Market storage market = _getMarket(conditionId);
+        require(msg.sender == _creators[conditionId], "only creator");
+        emit Owlpha_MarketNote(conditionId, msg.sender, note);
     }
 
     // legacy mint/burn removed in favor of curve-based trading
@@ -327,6 +340,10 @@ contract OwlphaFactory is ERC1155, Ownable {
     function marketQuestion(bytes32 conditionId) external view returns (string memory) {
         Market storage market = _getMarket(conditionId);
         return market.question;
+    }
+
+    function marketCreator(bytes32 conditionId) external view returns (address) {
+        return _creators[conditionId];
     }
 
     function marketEndTime(bytes32 conditionId) external view returns (uint256) {

@@ -13,6 +13,7 @@ Before you begin, ensure you have:
 - **Node.js 18+** - [Download here](https://nodejs.org/)
 - **Git** - [Download here](https://git-scm.com/)
 - **MetaMask Browser Extension** - [Install here](https://metamask.io/)
+- **Google Gemini API Key** - [Get here](https://makersuite.google.com/app/apikey) (for LLM market validation)
 
 ## 🔧 Installation & Setup
 
@@ -73,6 +74,20 @@ export const OWLPHA_FACTORY_ADDRESS = 'YOUR_FACTORY_ADDRESS';
 export const MOCK_USDC_ADDRESS = 'YOUR_USDC_ADDRESS';
 ```
 
+### Step 4.5: Setup Environment Variables
+
+1. Create `web/.env.local` file:
+```bash
+NEXT_PUBLIC_GEMINI_API_KEY=your_gemini_api_key_here
+```
+
+2. Get your Gemini API key:
+   - Go to [Google AI Studio](https://makersuite.google.com/app/apikey)
+   - Create a new API key
+   - Copy it to your `.env.local` file
+
+⚠️ **Important:** Never commit `.env.local` to git - it's already in `.gitignore`
+
 ### Step 5: Start Frontend
 
 ```bash
@@ -110,16 +125,18 @@ npm run dev
 ## 🎉 Test Your Setup
 
 1. Go to http://localhost:3000
-2. Click "Create Market"
-3. Fill out the form:
-   - Topic: "Will it rain tomorrow?"
-   - Description: "Weather prediction test"
-   - Resolution Date: Tomorrow's date
-   - Initial Liquidity: 100
-   - Arbitrator: "Weather.com"
-4. Click "Create Market"
-5. Approve transactions in MetaMask
-6. Your market should appear on the homepage!
+2. **Connect your wallet** (MetaMask should auto-connect if previously authorized)
+3. Click "Create Market"
+4. Fill out the form:
+   Example
+   - Question: "Will Bitcoin reach $100,000 by end of 2025?"
+   - Expire date & time: Set a future date
+   - Initial Liquidity: 10 USDC
+5. **Wait for AI validation** (Gemini will analyze your question)
+6. If validation passes, click "Accept & Continue"
+7. Approve transactions in MetaMask
+8. Your market should appear on the homepage!
+9. Click on your market to view the detailed event page
 
 ## 🛠️ Development Scripts
 
@@ -189,6 +206,9 @@ SC4053/
 - **MetaMask Integration** - Connect wallet to trade and create markets
 - **Real-time Updates** - Markets update automatically from blockchain
 - **Test Environment** - Complete local setup with mock USDC
+- **AI-Powered Validation** - Gemini LLM validates market questions for objectivity
+- **On-chain Settlement Notes** - LLM analysis stored as blockchain events
+- **Individual Market Pages** - Detailed event pages with trading interface
 
 ## 💡 Understanding the System
 
@@ -202,6 +222,8 @@ SC4053/
 2. **Trading**: Others can buy YES/NO shares at algorithmically determined prices
 3. **Settlement**: Market creator resolves the outcome
 4. **Redemption**: Winners redeem shares for collateral
+5. **AI Validation**: Gemini analyzes questions for objectivity and verifiability
+6. **Settlement Analysis**: LLM provides reasoning, sources, and criteria
 
 ## 🐛 Troubleshooting
 
@@ -222,6 +244,11 @@ SC4053/
 - Redeploy contracts: `npx hardhat run scripts/quickDeploy.js --network localhost`
 - Update contract addresses in `blockchain.ts`
 
+#### "Gemini API error" or validation fails
+- Check your `.env.local` file has `NEXT_PUBLIC_GEMINI_API_KEY`
+- Verify the API key is valid at [Google AI Studio](https://makersuite.google.com/app/apikey)
+- Try a different question format (be more specific with location, timeframe, etc.)
+
 #### Frontend won't start
 ```bash
 cd web
@@ -234,6 +261,7 @@ npm run dev
 - Check browser console for errors
 - Ensure MetaMask is connected
 - Try creating a test market
+- Check that Gemini API key is set up correctly
 
 ### Getting Help
 
