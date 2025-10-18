@@ -1,6 +1,15 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
+function sqrtBigInt(n) {
+  if (n < 0n) throw new Error("negative");
+  if (n < 2n) return n;
+  let x0 = n / 2n;
+  let x1 = (x0 + n / x0) / 2n;
+  while (x1 < x0) { x0 = x1; x1 = (x0 + n / x0) / 2n; }
+  return x0;
+}
+
 describe("OwlphaFactory", function () {
   let owlphaFactory;
   let collateralToken;
@@ -179,88 +188,71 @@ describe("OwlphaFactory", function () {
       noTokenId = await owlphaFactory.getNoTokenId(conditionId);
     });
     
-    it("Should mint decision tokens correctly", async function () {
-      const mintAmount = ethers.parseUnits("1000", 6); // 1000 USDC
+    it("Should buy YES tokens on curve", async function () {
+      const dS = ethers.parseUnits("1000", 18); // buy 1000 YES (18-decimal ERC1155)
+      const maxCost = ethers.parseUnits("10000", 6);
       
-      // User2 mints YES tokens
-      await owlphaFactory.connect(user2).mintDecisionTokens(conditionId, mintAmount, yesTokenId);
+      const rBefore = await collateralToken.balanceOf(owlphaFactory.target);
+      await owlphaFactory.connect(user2).buyYes(conditionId, dS, maxCost);
       
-      // Check user2 balance of YES tokens increased
       const balance = await owlphaFactory.balanceOf(user2.address, yesTokenId);
-      expect(balance).to.be.gt(0);
+      expect(balance).to.be.gte(dS);
       
-      // Check that USDC was transferred from user2
-      const factoryBalance = await collateralToken.balanceOf(owlphaFactory.target);
-      expect(factoryBalance).to.equal(INITIAL_LIQUIDITY + mintAmount);
+      const rAfter = await collateralToken.balanceOf(owlphaFactory.target);
+      expect(rAfter).to.be.gt(rBefore);
     });
     
-    it("Should revert minting with zero collateral amount", async function () {
+    it("Should revert buy with zero amount", async function () {
       await expect(
-        owlphaFactory.connect(user2).mintDecisionTokens(conditionId, 0, yesTokenId)
-      ).to.be.revertedWith("Invalid collateral amount");
+        owlphaFactory.connect(user2).buyYes(conditionId, 0, ethers.MaxUint256)
+      ).to.be.revertedWith("Invalid amount");
     });
 
-    it("Should revert minting for a non-existent market", async function () {
+    it("Should revert buying for a non-existent market", async function () {
       const fakeConditionId = ethers.encodeBytes32String("fakeMarket");
-      const mintAmount = ethers.parseUnits("100", 6);
       await expect(
-        owlphaFactory.connect(user2).mintDecisionTokens(fakeConditionId, mintAmount, yesTokenId) // yesTokenId doesn't matter here
+        owlphaFactory.connect(user2).buyYes(fakeConditionId, ethers.parseUnits("100", 18), ethers.MaxUint256)
       ).to.be.revertedWith("Market doesn't exist");
     });
 
-    it("Should revert minting after market end time", async function () {
+    it("Should revert buying after market end time", async function () {
       // Fast forward time past the market end time
       await ethers.provider.send("evm_setNextBlockTimestamp", [marketEndTime + 1]); // Use dynamic marketEndTime
       await ethers.provider.send("evm_mine"); 
 
-      const mintAmount = ethers.parseUnits("100", 6);
       await expect(
-        owlphaFactory.connect(user2).mintDecisionTokens(conditionId, mintAmount, yesTokenId)
+        owlphaFactory.connect(user2).buyYes(conditionId, ethers.parseUnits("100", 18), ethers.MaxUint256)
       ).to.be.revertedWith("Market trading stopped");
     });
 
-    it("Should revert minting with an invalid token ID", async function () {
-      const mintAmount = ethers.parseUnits("100", 6);
-      const invalidTokenId = ethers.MaxUint256; // An ID that doesn't correspond to YES or NO
-      await expect(
-        owlphaFactory.connect(user2).mintDecisionTokens(conditionId, mintAmount, invalidTokenId)
-      ).to.be.revertedWithCustomError(owlphaFactory, "InvalidTokenId");
+    it("Should sell YES tokens on curve", async function () {
+      // Buy some YES first
+      const dS = ethers.parseUnits("1000", 18);
+      await owlphaFactory.connect(user2).buyYes(conditionId, dS, ethers.parseUnits("10000", 6));
+
+      const balanceBefore = await owlphaFactory.balanceOf(user2.address, yesTokenId);
+      const usdcBefore = await collateralToken.balanceOf(user2.address);
+
+      const sellAmount = balanceBefore / BigInt(2);
+      await owlphaFactory.connect(user2).sellYes(conditionId, sellAmount, 0);
+
+      const balanceAfter = await owlphaFactory.balanceOf(user2.address, yesTokenId);
+      const usdcAfter = await collateralToken.balanceOf(user2.address);
+
+      expect(balanceAfter).to.equal(balanceBefore - sellAmount);
+      expect(usdcAfter).to.be.gt(usdcBefore);
     });
 
-    it("Should burn decision tokens correctly", async function () {
-      const mintAmount = ethers.parseUnits("1000", 6); // 1000 USDC
-      
-      // User2 mints YES tokens
-      await owlphaFactory.connect(user2).mintDecisionTokens(conditionId, mintAmount, yesTokenId);
-      
-      // Get user2's balance of YES tokens
-      const initialYesBalance = await owlphaFactory.balanceOf(user2.address, yesTokenId);
-      const initialUsdcBalance = await collateralToken.balanceOf(user2.address);
-      
-      // User2 burns half their YES tokens
-      const burnAmount = initialYesBalance / BigInt(2);
-      await owlphaFactory.connect(user2).burnDecisionTokens(conditionId, yesTokenId, burnAmount);
-      
-      // Check that YES tokens were burned
-      const finalYesBalance = await owlphaFactory.balanceOf(user2.address, yesTokenId);
-      expect(finalYesBalance).to.equal(initialYesBalance - burnAmount);
-      
-      // Check that USDC was returned to user2
-      const finalUsdcBalance = await collateralToken.balanceOf(user2.address);
-      expect(finalUsdcBalance).to.be.gt(initialUsdcBalance);
-    });
-
-    it("Should revert burning for a non-existent market", async function () {
+    it("Should revert selling for a non-existent market", async function () {
       const fakeConditionId = ethers.encodeBytes32String("fakeMarket");
       await expect(
-        owlphaFactory.connect(user1).burnDecisionTokens(fakeConditionId, yesTokenId, 1) // Burn 1 token
+        owlphaFactory.connect(user1).sellYes(fakeConditionId, 1, 0)
       ).to.be.revertedWith("Market doesn't exist");
     });
 
-    it("Should revert burning after market end time", async function () {
-      // Mint some tokens first to have something to burn
-      const mintAmount = ethers.parseUnits("100", 6);
-      await owlphaFactory.connect(user2).mintDecisionTokens(conditionId, mintAmount, yesTokenId);
+    it("Should revert selling after market end time", async function () {
+      // Buy some YES first to have balance
+      await owlphaFactory.connect(user2).buyYes(conditionId, ethers.parseUnits("100", 18), ethers.parseUnits("1000000", 6));
       const yesBalance = await owlphaFactory.balanceOf(user2.address, yesTokenId);
       
       // Fast forward time past the market end time
@@ -268,24 +260,24 @@ describe("OwlphaFactory", function () {
       await ethers.provider.send("evm_mine"); 
 
       await expect(
-        owlphaFactory.connect(user2).burnDecisionTokens(conditionId, yesTokenId, yesBalance)
+        owlphaFactory.connect(user2).sellYes(conditionId, yesBalance, 0)
       ).to.be.revertedWith("Market trading stopped");
     });
 
-    it("Should revert burning zero tokens", async function () {
+    it("Should revert selling zero tokens", async function () {
       await expect(
-        owlphaFactory.connect(user1).burnDecisionTokens(conditionId, yesTokenId, 0)
+        owlphaFactory.connect(user1).sellYes(conditionId, 0, 0)
       ).to.be.revertedWith("Invalid amount");
     });
 
-    it("Should revert burning with insufficient balance", async function () {
-      // User2 hasn't minted any NO tokens
+    it("Should revert selling with insufficient balance", async function () {
+      // User2 hasn't bought any NO tokens
       const noBalance = await owlphaFactory.balanceOf(user2.address, noTokenId);
       expect(noBalance).to.equal(0);
       
       await expect(
-        owlphaFactory.connect(user2).burnDecisionTokens(conditionId, noTokenId, 1) // Try to burn 1 NO token
-      ).to.be.revertedWith("Insufficient balance");
+        owlphaFactory.connect(user2).sellNo(conditionId, 1, 0)
+      ).to.be.revertedWith("insufficient NO");
     });
   });
 
@@ -312,9 +304,8 @@ describe("OwlphaFactory", function () {
       yesTokenId = await owlphaFactory.getYesTokenId(conditionId);
       noTokenId = await owlphaFactory.getNoTokenId(conditionId);
 
-      // User2 mints some YES tokens
-      const mintAmountYes = ethers.parseUnits("2000", 6);
-      await owlphaFactory.connect(user2).mintDecisionTokens(conditionId, mintAmountYes, yesTokenId);
+      // User2 buys some YES tokens
+      await owlphaFactory.connect(user2).buyYes(conditionId, ethers.parseUnits("2000", 18), ethers.parseUnits("1000000", 6));
 
       // User1 (LP) still holds initial tokens
     });
@@ -383,10 +374,6 @@ describe("OwlphaFactory", function () {
       await expect(owlphaFactory.connect(user2).redeemPosition(conditionId)).to.emit(owlphaFactory, "Owlpha_PositionRedeemed");
 
       // Check balances after redemption
-      // Due to scaling/rounding, balances might not be exactly zero, but should be negligible
-      // Instead, we primarily check that the collateral balance increased
-      // expect(await owlphaFactory.balanceOf(user1.address, yesTokenId)).to.equal(0); 
-      // expect(await owlphaFactory.balanceOf(user2.address, yesTokenId)).to.equal(0);
       expect(await collateralToken.balanceOf(user1.address)).to.be.gt(user1InitialCollateral);
       expect(await collateralToken.balanceOf(user2.address)).to.be.gt(user2InitialCollateral);
     });
@@ -424,6 +411,46 @@ describe("OwlphaFactory", function () {
       await expect(
         owlphaFactory.connect(owner).setTakeFee(invalidFee)
       ).to.be.revertedWith("Invalid take fee");
+    });
+  });
+
+  describe("Curve invariants", function () {
+    it("Price circle and reserve invariant hold after trades", async function () {
+      // Ensure owner can provide initial liquidity
+      await collateralToken.mint(owner.address, INITIAL_LIQUIDITY);
+      await collateralToken.connect(owner).approve(owlphaFactory.target, INITIAL_LIQUIDITY);
+
+      const block = await ethers.provider.getBlock('latest');
+      const endTime = block.timestamp + 86400;
+      const tx = await owlphaFactory.connect(owner).createPredictionMarket(
+        INITIAL_LIQUIDITY,
+        collateralToken.target,
+        MARKET_QUESTION,
+        endTime
+      );
+      const rc = await tx.wait();
+      const evt = rc.logs.find(log => owlphaFactory.interface.parseLog(log)?.name === "Owlpha_MarketCreated");
+      const conditionId = owlphaFactory.interface.parseLog(evt).args.conditionId;
+      const yesTokenId = await owlphaFactory.getYesTokenId(conditionId);
+      const noTokenId = await owlphaFactory.getNoTokenId(conditionId);
+
+      // Do a couple of trades
+      await owlphaFactory.connect(user1).buyYes(conditionId, ethers.parseUnits("1200", 18), ethers.parseUnits("1", 24));
+      await owlphaFactory.connect(user2).buyNo(conditionId, ethers.parseUnits("800", 18), ethers.parseUnits("1", 24));
+
+      // Fetch state
+      const [sYes, sNo] = await owlphaFactory.marketSupplies(conditionId);
+      const r = await owlphaFactory.marketReserve(conditionId);
+      const [cWad, unitWad] = await owlphaFactory.marketScale(conditionId);
+
+      const WAD = 10n ** 18n;
+      const norm = sqrtBigInt(sYes * sYes + sNo * sNo);
+
+      // Reserve invariant: r ~= c * unit * sqrt(sYes^2 + sNo^2)
+      const rhs = (norm * cWad * unitWad) / (WAD * WAD); // scale back to raw units
+      const diff = r > rhs ? r - rhs : rhs - r;
+      // relative diff < 0.5%
+      expect(diff * 200n <= (r === 0n ? 1n : r)).to.equal(true);
     });
   });
 });

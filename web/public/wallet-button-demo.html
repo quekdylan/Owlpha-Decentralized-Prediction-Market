@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wallet Button Demo</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-[#0c0511] min-h-screen p-8">
+  <div class="max-w-6xl mx-auto">
+    <h1 class="text-white text-2xl mb-8">Wallet Button - Connected State</h1>
+    
+    <!-- Header Demo -->
+    <div class="bg-white/5 rounded-lg p-6 mb-8">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-4">
+          <div class="w-10 h-10 bg-fuchsia-600 rounded-full"></div>
+          <span class="text-white text-lg font-bold">Owlpha</span>
+        </div>
+        
+        <!-- Wallet Button -->
+        <div class="relative">
+          <button class="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-colors">
+            <div class="w-2 h-2 bg-emerald-500 rounded-full"></div>
+            <span class="text-white text-sm font-medium">0xB92A...8E42</span>
+            <svg class="w-4 h-4 text-white/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dropdown Demo -->
+    <div class="bg-white/5 rounded-lg p-6">
+      <h2 class="text-white text-xl mb-4">Dropdown Menu (when clicked)</h2>
+      <div class="w-64 bg-[#1a1625] border border-white/10 rounded-lg shadow-xl overflow-hidden">
+        <div class="p-4 border-b border-white/10">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-white/70 text-xs">Wallet Address</span>
+            <button class="text-emerald-400 hover:text-emerald-300 transition-colors" title="Copy address">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+            </button>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-white text-sm font-mono">0xB92A...8E42</span>
+          </div>
+        </div>
+
+        <button class="w-full px-4 py-3 text-left text-emerald-400 hover:bg-white/5 transition-colors flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+          </svg>
+          <span>Disconnect</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="mt-8 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
+      <h3 class="text-emerald-400 font-semibold mb-2">Features:</h3>
+      <ul class="text-white/70 text-sm space-y-1">
+        <li>✓ Green indicator shows connected status</li>
+        <li>✓ Truncated address format (0xB92A...8E42)</li>
+        <li>✓ Click to open dropdown menu</li>
+        <li>✓ Copy address to clipboard</li>
+        <li>✓ Disconnect button returns to connection screen</li>
+        <li>✓ Click outside dropdown to close</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>
