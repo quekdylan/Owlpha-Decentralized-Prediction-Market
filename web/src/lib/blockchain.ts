@@ -20,12 +20,20 @@ export const OWLPHA_FACTORY_ABI = [
   "function createPredictionMarket(uint256 initialLiquidity, address collateralToken, string calldata question, uint256 endTime) external returns (bytes32 conditionId)",
   "function getYesTokenId(bytes32 conditionId) external view returns (uint256)",
   "function getNoTokenId(bytes32 conditionId) external view returns (uint256)",
+  "function collateralToken(bytes32 conditionId) external view returns (address)",
+  "function marketCreator(bytes32 conditionId) external view returns (address)",
   "function marketEndTime(bytes32 conditionId) external view returns (uint256)",
   "function marketQuestion(bytes32 conditionId) external view returns (string)",
   "function marketSettled(bytes32 conditionId) external view returns (bool)",
   "function marketReserve(bytes32 conditionId) external view returns (uint256)",
   "function marketSupplies(bytes32 conditionId) external view returns (uint256 sYes, uint256 sNo)",
+  "function marketScale(bytes32 conditionId) external view returns (uint256 cWad, uint256 unitWad)",
   "function getMarketPrice(bytes32 conditionId, uint256 tokenId) external view returns (uint256)",
+  "function balanceOf(address account, uint256 id) external view returns (uint256)",
+  "function buyYes(bytes32 conditionId, uint256 dS, uint256 maxCollateral) external",
+  "function buyNo(bytes32 conditionId, uint256 dS, uint256 maxCollateral) external",
+  "function sellYes(bytes32 conditionId, uint256 dS, uint256 minCollateral) external",
+  "function sellNo(bytes32 conditionId, uint256 dS, uint256 minCollateral) external",
   "event Owlpha_MarketCreated(bytes32 indexed conditionId, address indexed creator, uint256 yesTokenId, uint256 noTokenId, string question, uint256 endTime, address collateralToken)"
 ];
 
@@ -34,11 +42,408 @@ export const USDC_ABI = [
   "function approve(address spender, uint256 amount) external returns (bool)",
   "function mint(address to, uint256 amount) external",
   "function balanceOf(address account) external view returns (uint256)",
-  "function allowance(address owner, address spender) external view returns (uint256)"
+  "function allowance(address owner, address spender) external view returns (uint256)",
+  "function decimals() external view returns (uint8)"
 ];
 
 // Mock USDC address for testing (you'll need to deploy this)
 export const MOCK_USDC_ADDRESS = '0x5FbDB2315678afecb367f032d93F642f64180aa3'; // Updated with deployed address
+
+export type MarketTradingState = {
+  conditionId: string;
+  collateralToken: string;
+  collateralDecimals: number;
+  yesTokenId: bigint;
+  noTokenId: bigint;
+  sYes: bigint;
+  sNo: bigint;
+  reserve: bigint;
+  cWad: bigint;
+  unitWad: bigint;
+};
+
+export type UserMarketBalances = {
+  usdc: bigint;
+  yes: bigint;
+  no: bigint;
+  allowance: bigint;
+};
+
+export type BuyQuote = {
+  tokens: bigint;
+  cost: bigint;
+  payout: bigint;
+};
+
+export type SellQuote = {
+  tokens: bigint;
+  proceeds: bigint;
+  payout: bigint;
+};
+
+export type ExecuteTradeParams = {
+  side: 'buy' | 'sell';
+  outcome: 'yes' | 'no';
+  amount: bigint;
+  slippageBps?: number;
+};
+
+const BIGINT_ZERO = BigInt(0);
+const BIGINT_ONE = BigInt(1);
+const BIGINT_TWO = BigInt(2);
+const WAD = BigInt("1000000000000000000");
+
+function pow10(exp: number): bigint {
+  if (exp <= 0) {
+    return BIGINT_ONE;
+  }
+  let result = BIGINT_ONE;
+  const ten = BigInt(10);
+  for (let i = 0; i < exp; i++) {
+    result *= ten;
+  }
+  return result;
+}
+
+function curveCollateralToDecision(amount: bigint, collateralDecimals: number): bigint {
+  if (amount === BIGINT_ZERO) {
+    return BIGINT_ZERO;
+  }
+  if (collateralDecimals === 18) {
+    return amount;
+  }
+  if (collateralDecimals < 18) {
+    const factor = pow10(18 - collateralDecimals);
+    return amount * factor;
+  }
+  const divisor = pow10(collateralDecimals - 18);
+  if (divisor === BIGINT_ZERO) {
+    return BIGINT_ZERO;
+  }
+  return amount / divisor;
+}
+
+function curveDecisionToCollateral(amount: bigint, collateralDecimals: number): bigint {
+  if (amount === BIGINT_ZERO) {
+    return BIGINT_ZERO;
+  }
+  if (collateralDecimals === 18) {
+    return amount;
+  }
+  if (collateralDecimals < 18) {
+    const divisor = pow10(18 - collateralDecimals);
+    if (divisor === BIGINT_ZERO) {
+      return BIGINT_ZERO;
+    }
+    return amount / divisor;
+  }
+  const factor = pow10(collateralDecimals - 18);
+  return amount * factor;
+}
+
+function sqrtBigInt(value: bigint): bigint {
+  if (value < BIGINT_ZERO) {
+    throw new Error('sqrt of negative number');
+  }
+  if (value < BIGINT_TWO) {
+    return value;
+  }
+  let x = value;
+  let y = (x + value / x) / BIGINT_TWO;
+  while (y < x) {
+    x = y;
+    y = (x + value / x) / BIGINT_TWO;
+  }
+  return x;
+}
+
+function curveNorm(sYes: bigint, sNo: bigint): bigint {
+  const yesSquared = sYes * sYes;
+  const noSquared = sNo * sNo;
+  return sqrtBigInt(yesSquared + noSquared);
+}
+
+function curveReserve(sYes: bigint, sNo: bigint, cWad: bigint, unitWad: bigint): bigint {
+  const n = curveNorm(sYes, sNo);
+  if (n === BIGINT_ZERO || unitWad === BIGINT_ZERO) {
+    return BIGINT_ZERO;
+  }
+  const tmp = (n * cWad) / WAD;
+  return (tmp * unitWad) / WAD;
+}
+
+function curveCostToBuyYes(sYes: bigint, sNo: bigint, cWad: bigint, unitWad: bigint, dS: bigint): bigint {
+  if (dS <= BIGINT_ZERO) {
+    return BIGINT_ZERO;
+  }
+  const rAfter = curveReserve(sYes + dS, sNo, cWad, unitWad);
+  const rBefore = curveReserve(sYes, sNo, cWad, unitWad);
+  if (rAfter <= rBefore) {
+    return BIGINT_ZERO;
+  }
+  return rAfter - rBefore;
+}
+
+function curveCostToBuyNo(sYes: bigint, sNo: bigint, cWad: bigint, unitWad: bigint, dS: bigint): bigint {
+  if (dS <= BIGINT_ZERO) {
+    return BIGINT_ZERO;
+  }
+  const rAfter = curveReserve(sYes, sNo + dS, cWad, unitWad);
+  const rBefore = curveReserve(sYes, sNo, cWad, unitWad);
+  if (rAfter <= rBefore) {
+    return BIGINT_ZERO;
+  }
+  return rAfter - rBefore;
+}
+
+function curveProceedsFromSellYes(sYes: bigint, sNo: bigint, cWad: bigint, unitWad: bigint, dS: bigint): bigint {
+  if (dS <= BIGINT_ZERO || dS > sYes) {
+    return BIGINT_ZERO;
+  }
+  const rBefore = curveReserve(sYes, sNo, cWad, unitWad);
+  const rAfter = curveReserve(sYes - dS, sNo, cWad, unitWad);
+  if (rBefore <= rAfter) {
+    return BIGINT_ZERO;
+  }
+  return rBefore - rAfter;
+}
+
+function curveProceedsFromSellNo(sYes: bigint, sNo: bigint, cWad: bigint, unitWad: bigint, dS: bigint): bigint {
+  if (dS <= BIGINT_ZERO || dS > sNo) {
+    return BIGINT_ZERO;
+  }
+  const rBefore = curveReserve(sYes, sNo, cWad, unitWad);
+  const rAfter = curveReserve(sYes, sNo - dS, cWad, unitWad);
+  if (rBefore <= rAfter) {
+    return BIGINT_ZERO;
+  }
+  return rBefore - rAfter;
+}
+
+function findMintedForCollateral(
+  costFn: (dS: bigint) => bigint,
+  targetCollateral: bigint
+): { minted: bigint; cost: bigint } {
+  if (targetCollateral <= BIGINT_ZERO) {
+    return { minted: BIGINT_ZERO, cost: BIGINT_ZERO };
+  }
+
+  let low = BIGINT_ZERO;
+  let high = BIGINT_ONE;
+  let highCost = costFn(high);
+  let iterations = 0;
+  const growthLimit = 128;
+
+  while (highCost < targetCollateral && iterations < growthLimit) {
+    high *= BIGINT_TWO;
+    highCost = costFn(high);
+    iterations++;
+  }
+
+  let bestMinted = BIGINT_ZERO;
+  let bestCost = BIGINT_ZERO;
+  iterations = 0;
+  const binaryLimit = 256;
+
+  while (low <= high && iterations < binaryLimit) {
+    const mid = (low + high) / BIGINT_TWO;
+    const cost = costFn(mid);
+    if (cost <= targetCollateral) {
+      bestMinted = mid;
+      bestCost = cost;
+      low = mid + BIGINT_ONE;
+    } else {
+      if (mid === BIGINT_ZERO) {
+        break;
+      }
+      high = mid - BIGINT_ONE;
+    }
+    iterations++;
+  }
+
+  return { minted: bestMinted, cost: bestCost };
+}
+
+export async function loadMarketTradingState(conditionId: string): Promise<MarketTradingState | null> {
+  try {
+    if (typeof window === 'undefined' || typeof window.ethereum === 'undefined') {
+      return null;
+    }
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    const contract = new ethers.Contract(OWLPHA_FACTORY_ADDRESS, OWLPHA_FACTORY_ABI, provider);
+
+    const [yesTokenId, noTokenId, supplies, reserve, scale, collateralAddress] = await Promise.all([
+      contract.getYesTokenId(conditionId),
+      contract.getNoTokenId(conditionId),
+      contract.marketSupplies(conditionId),
+      contract.marketReserve(conditionId),
+      contract.marketScale(conditionId),
+      contract.collateralToken(conditionId)
+    ]);
+
+    const sYes = (supplies as any).sYes ?? (Array.isArray(supplies) ? supplies[0] : BIGINT_ZERO);
+    const sNo = (supplies as any).sNo ?? (Array.isArray(supplies) ? supplies[1] : BIGINT_ZERO);
+    const cWad = (scale as any).cWad ?? (Array.isArray(scale) ? scale[0] : BIGINT_ZERO);
+    const unitWad = (scale as any).unitWad ?? (Array.isArray(scale) ? scale[1] : BIGINT_ZERO);
+
+    let collateralDecimals = 6;
+    let collateralToken = collateralAddress as string;
+
+    try {
+      if (collateralToken && collateralToken !== ethers.ZeroAddress) {
+        const collateralContract = new ethers.Contract(collateralToken, USDC_ABI, provider);
+        const decimalsValue = await collateralContract.decimals();
+        collateralDecimals = Number(decimalsValue);
+      }
+    } catch (decimalsErr) {
+      console.warn('Failed to read collateral decimals, defaulting to 6', decimalsErr);
+      collateralDecimals = 6;
+    }
+
+    return {
+      conditionId,
+      collateralToken,
+      collateralDecimals,
+      yesTokenId,
+      noTokenId,
+      sYes,
+      sNo,
+      reserve,
+      cWad,
+      unitWad
+    };
+  } catch (error) {
+    console.error('Failed to load market trading state:', error);
+    return null;
+  }
+}
+
+export async function getUserBalances(state: MarketTradingState, address: string): Promise<UserMarketBalances> {
+  if (!state || !address) {
+    throw new Error('Missing market state or address');
+  }
+  if (typeof window === 'undefined' || typeof window.ethereum === 'undefined') {
+    throw new Error('Wallet provider unavailable');
+  }
+
+  const provider = new ethers.BrowserProvider(window.ethereum);
+  const contract = new ethers.Contract(OWLPHA_FACTORY_ADDRESS, OWLPHA_FACTORY_ABI, provider);
+  const collateralContract = new ethers.Contract(state.collateralToken, USDC_ABI, provider);
+
+  const [usdc, yes, no, allowance] = await Promise.all([
+    collateralContract.balanceOf(address),
+    contract.balanceOf(address, state.yesTokenId),
+    contract.balanceOf(address, state.noTokenId),
+    collateralContract.allowance(address, OWLPHA_FACTORY_ADDRESS)
+  ]);
+
+  return { usdc, yes, no, allowance };
+}
+
+export function quoteBuy(state: MarketTradingState | null, outcome: 'yes' | 'no', collateralAmount: bigint): BuyQuote | null {
+  if (!state) {
+    return null;
+  }
+  if (collateralAmount <= BIGINT_ZERO) {
+    return null;
+  }
+
+  const costFn = (dS: bigint) =>
+    outcome === 'yes'
+      ? curveCostToBuyYes(state.sYes, state.sNo, state.cWad, state.unitWad, dS)
+      : curveCostToBuyNo(state.sYes, state.sNo, state.cWad, state.unitWad, dS);
+
+  const { minted, cost } = findMintedForCollateral(costFn, collateralAmount);
+  if (minted <= BIGINT_ZERO || cost <= BIGINT_ZERO) {
+    return null;
+  }
+
+  const payout = curveDecisionToCollateral(minted, state.collateralDecimals);
+  return { tokens: minted, cost, payout };
+}
+
+export function quoteSell(state: MarketTradingState | null, outcome: 'yes' | 'no', tokenAmount: bigint): SellQuote | null {
+  if (!state) {
+    return null;
+  }
+  if (tokenAmount <= BIGINT_ZERO) {
+    return null;
+  }
+
+  const proceeds =
+    outcome === 'yes'
+      ? curveProceedsFromSellYes(state.sYes, state.sNo, state.cWad, state.unitWad, tokenAmount)
+      : curveProceedsFromSellNo(state.sYes, state.sNo, state.cWad, state.unitWad, tokenAmount);
+
+  if (proceeds <= BIGINT_ZERO) {
+    return null;
+  }
+
+  const payout = curveDecisionToCollateral(tokenAmount, state.collateralDecimals);
+  return { tokens: tokenAmount, proceeds, payout };
+}
+
+export async function executeTrade(
+  conditionId: string,
+  state: MarketTradingState,
+  params: ExecuteTradeParams
+): Promise<{ receipt: ethers.TransactionReceipt; quote: BuyQuote | SellQuote }> {
+  if (!state) {
+    throw new Error('Market trading state unavailable');
+  }
+  if (typeof window === 'undefined' || typeof window.ethereum === 'undefined') {
+    throw new Error('Wallet provider unavailable');
+  }
+
+  const { signer } = await connectWallet();
+  const userAddress = await signer.getAddress();
+  const factory = new ethers.Contract(OWLPHA_FACTORY_ADDRESS, OWLPHA_FACTORY_ABI, signer);
+  const slippageBps = params.slippageBps ?? 100;
+  const slippageBig = BigInt(slippageBps);
+
+  if (params.side === 'buy') {
+    const quote = quoteBuy(state, params.outcome, params.amount);
+    if (!quote) {
+      throw new Error('Amount too small to mint tokens');
+    }
+
+    const slippageBuffer = (quote.cost * slippageBig) / BigInt(10000);
+    const maxCollateral = quote.cost + slippageBuffer + BIGINT_ONE;
+
+    const collateralContract = new ethers.Contract(state.collateralToken, USDC_ABI, signer);
+    const allowance = await collateralContract.allowance(userAddress, OWLPHA_FACTORY_ADDRESS);
+    if (allowance < maxCollateral) {
+      const approveAmount = ethers.parseUnits('1000000', state.collateralDecimals);
+      const approveTx = await collateralContract.approve(OWLPHA_FACTORY_ADDRESS, approveAmount);
+      await approveTx.wait();
+    }
+
+    const tx = params.outcome === 'yes'
+      ? await factory.buyYes(conditionId, quote.tokens, maxCollateral)
+      : await factory.buyNo(conditionId, quote.tokens, maxCollateral);
+    const receipt = await tx.wait();
+    return { receipt, quote };
+  } else {
+    const quote = quoteSell(state, params.outcome, params.amount);
+    if (!quote) {
+      throw new Error('Amount too small to sell');
+    }
+
+    const slippageBuffer = (quote.proceeds * slippageBig) / BigInt(10000);
+    let minCollateral = quote.proceeds;
+    if (slippageBuffer > BIGINT_ZERO && minCollateral > slippageBuffer) {
+      minCollateral -= slippageBuffer;
+    } else if (slippageBuffer > BIGINT_ZERO) {
+      minCollateral = BIGINT_ZERO;
+    }
+
+    const tx = params.outcome === 'yes'
+      ? await factory.sellYes(conditionId, quote.tokens, minCollateral)
+      : await factory.sellNo(conditionId, quote.tokens, minCollateral);
+    const receipt = await tx.wait();
+    return { receipt, quote };
+  }
+}
 
 // Get markets from blockchain
 export async function getBlockchainMarkets() {

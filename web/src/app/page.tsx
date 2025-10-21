@@ -138,30 +138,30 @@ export default function Home() {
   }
   
   return (
-    <div className="px-12 py-10">
-      <header className="mb-8 flex items-center justify-between">
+    <div className="px-48 py-10">
+      <header className="mb-16 flex items-center justify-between rounded-full px-4 py-4">
         <div className="flex items-center gap-8">
-          <img src="/owlphaLogo.svg" alt="Owlpha" className="h-40 w-40" />
+          <img src="/owlphaLogo.svg" alt="Owlpha" className="w-36 cursor-pointer" />
           <nav className="flex items-center gap-8 text-sm text-white/80">
             <button 
               onClick={() => setShowHowItWorks(true)}
-              className="font-semibold text-white hover:text-white/80 transition-colors"
+              className="font-semibold text-white hover:text-white/80 transition-colors cursor-pointer"
             >
               How it works
             </button>
-            <span className="text-white">Explore markets</span>
+            <span className="text-white cursor-pointer">Explore markets</span>
             <span className="text-white/70">Leaderboard</span>
           </nav>
         </div>
         <div className="flex items-center gap-4">
+          <WalletButton address={walletAddress} onDisconnect={handleWalletDisconnect} />
           <button 
             onClick={() => setShowCreateMarket(true)}
-            className="boton-elegante relative overflow-hidden px-8 py-4 border-2 border-neutral-700 bg-neutral-900 text-white text-xl cursor-pointer rounded-full transition-all duration-400 outline-none font-bold hover:border-neutral-500 hover:bg-fuchsia-600/20 group"
+            className="boton-elegante relative overflow-hidden px-6 py-2 border-2 border-neutral-700 bg-neutral-900 text-white text-l cursor-pointer rounded-full transition-all duration-400 outline-none font-bold hover:border-neutral-500 hover:bg-fuchsia-600/20 group"
           >
             Create Market
             <span className="absolute top-0 left-0 w-full h-full bg-gradient-radial from-white/25 to-transparent opacity-0 scale-0 transition-transform duration-500 group-hover:scale-[4] group-hover:opacity-100"></span>
           </button>
-          <WalletButton address={walletAddress} onDisconnect={handleWalletDisconnect} />
         </div>
       </header>
 

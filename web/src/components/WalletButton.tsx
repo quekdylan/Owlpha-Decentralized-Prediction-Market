@@ -48,7 +48,7 @@ export default function WalletButton({ address, onDisconnect }: WalletButtonProp
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-colors"
+        className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-colors cursor-pointer"
       >
         <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
         <span className="text-white text-sm font-medium">{formatAddress(address)}</span>
@@ -69,7 +69,7 @@ export default function WalletButton({ address, onDisconnect }: WalletButtonProp
               <span className="text-white/70 text-xs">Wallet Address</span>
               <button
                 onClick={handleCopyAddress}
-                className="text-emerald-400 hover:text-emerald-300 transition-colors"
+                className="text-emerald-400 hover:text-emerald-300 transition-colors cursor-pointer"
                 title="Copy address"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -87,7 +87,7 @@ export default function WalletButton({ address, onDisconnect }: WalletButtonProp
               setIsOpen(false);
               onDisconnect();
             }}
-            className="w-full px-4 py-3 text-left text-emerald-400 hover:bg-white/5 transition-colors flex items-center gap-2"
+            className="w-full px-4 py-3 text-left text-emerald-400 hover:bg-white/5 transition-colors flex items-center gap-2 cursor-pointer"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
