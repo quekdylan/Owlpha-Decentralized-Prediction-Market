@@ -22,7 +22,7 @@ Before you begin, ensure you have:
 ```bash
 # Clone the repository
 git clone <your-repo-url>
-cd SC4053
+cd Owlpha-Decentralized-Prediction-Market
 
 # Install contract dependencies
 cd contract
@@ -180,7 +180,7 @@ npm run lint
 ## 🏗️ Project Structure
 
 ```
-SC4053/
+Owlpha-Decentralized-Prediction-Market/
 ├── contract/                 # Smart contracts (Hardhat)
 │   ├── contracts/
 │   │   ├── OwlphaFactory.sol          # Main prediction market contract
@@ -301,7 +301,7 @@ This project is licensed under the MIT License.
 
 ```bash
 # Full setup from scratch:
-git clone <repo> && cd SC4053
+git clone <repo> && cd Owlpha-Decentralized-Prediction-Market
 cd contract && npm install && npx hardhat node &
 npx hardhat run scripts/quickDeploy.js --network localhost
 cd ../web && npm install && npm run dev
