@@ -286,25 +286,10 @@ npm run dev
 - Mock USDC has unlimited minting - for testing only
 - No access controls on market settlement - demo purposes
 
-## 📚 Next Steps
 
-Want to extend the project? Consider:
+## 🤝 Contributions
 
-- **Real token integration** (USDC, DAI)
-- **Market categories** and filtering
-- **User profiles** and trading history
-- **Liquidity incentives** and rewards
-- **Oracle integration** for automatic settlement
-- **Mobile responsive design**
-- **Testnet deployment** (Sepolia, Mumbai)
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create your feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
+Developed in collaboration with Kean Yee and Abdillah
 
 ## 📄 License
 
